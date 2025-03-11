@@ -5,8 +5,12 @@ import (
 	"sort"
 )
 
-type TFIDF struct {
-	docs          [][]string
+type Tokenizable interface {
+	Words() []string
+}
+
+type TFIDF[T Tokenizable] struct {
+	docs          []T
 	Sentence      []string
 	termIDFMap    map[string]float64         // 每个词在文档中的idf值
 	termTFMap     map[string]map[int]float64 // 每个词在每个文档中的tf值
@@ -18,33 +22,63 @@ type SentenceScore struct {
 	Score    float64
 }
 
-func NewTFIDF(docs [][]string) *TFIDF {
-	return &TFIDF{
+type Docs struct {
+	docs []Doc
+}
+
+func NewArrayDocs(docs [][]string) *Docs {
+	adocs := make([]Doc, 0)
+	for _, doc := range docs {
+		ad := Doc{
+			Items: doc,
+		}
+		adocs = append(adocs, ad)
+	}
+	return &Docs{
+		docs: adocs,
+	}
+}
+
+type Doc struct {
+	Items []string
+}
+
+func (doc Doc) Words() []string {
+	return doc.Items
+}
+
+func NewTFIDF[T Tokenizable](docs []T) *TFIDF[T] {
+	return &TFIDF[T]{
 		docs:       docs,
 		termIDFMap: make(map[string]float64),
 		termTFMap:  make(map[string]map[int]float64),
 	}
 }
 
-func (ti *TFIDF) Scan(sentence []string) []string {
+func (ti *TFIDF[T]) Scan(sentence []string) []string {
 	ti.ScanDocs(sentence)
 	return ti.ScanSentence(sentence)
 }
 
-func (ti *TFIDF) SortedDocs() [][]string {
-	docs := make([][]string, 0)
-	for _, doc := range ti.sentenceScore {
-		docs = append(docs, ti.docs[doc.DocIndex])
+func (ti *TFIDF[T]) SortedDocs(k int) ([]T, []float64) {
+	if k > len(ti.sentenceScore) {
+		k = len(ti.sentenceScore)
 	}
-	return docs
+	docs := make([]T, k)
+	scores := make([]float64, k)
+	for i, doc := range ti.sentenceScore[:k] {
+		docs[i] = ti.docs[doc.DocIndex]
+		scores[i] = doc.Score
+	}
+	return docs, scores
 }
 
-func (ti *TFIDF) ScanSentence(sentence []string) []string {
+func (ti *TFIDF[T]) ScanSentence(sentence []string) []string {
 	ti.Sentence = sentence
 	// 初始化 termScore
 	ti.sentenceScore = make([]*SentenceScore, 0)
 	ti.ScanDocs(sentence)
-	for idx, _ := range ti.docs {
+	for idx := range ti.docs {
 		ti.sentenceScore = append(ti.sentenceScore, &SentenceScore{DocIndex: idx, Score: 0})
 		for _, term := range sentence {
 			ti.sentenceScore[idx].Score += ti.termTFMap[term][idx] * ti.termIDFMap[term]
@@ -55,21 +89,25 @@ func (ti *TFIDF) ScanSentence(sentence []string) []string {
 	sort.Slice(ti.sentenceScore, func(i, j int) bool {
 		return ti.sentenceScore[i].Score > ti.sentenceScore[j].Score
 	})
-	return ti.docs[ti.sentenceScore[0].DocIndex]
+	return ti.docs[ti.sentenceScore[0].DocIndex].Words()
 }
 
 // 每一个词对于整个文档来说， tf idf 值是固定的，所以只需要计算一次
-func (ti *TFIDF) ScanDocs(sentence []string) {
+func (ti *TFIDF[T]) ScanDocs(sentence []string) {
 	// 初始化 termTFMap（如果尚未初始化）
 	if ti.termTFMap == nil {
 		ti.termTFMap = make(map[string]map[int]float64)
+	}
+	docs := make([][]string, 0)
+	for _, doc := range ti.docs {
+		docs = append(docs, doc.Words())
 	}
 
 	for _, term := range sentence {
 		// 检查 IDF 是否已缓存
 		if _, ok := ti.termIDFMap[term]; !ok {
 			// 计算并缓存 IDF
-			idf := inverseDocumentFrequency(ti.docs, term)
+			idf := inverseDocumentFrequency(docs, term)
 			ti.termIDFMap[term] = idf
 		}
 
@@ -79,7 +117,7 @@ func (ti *TFIDF) ScanDocs(sentence []string) {
 		}
 		for i, doc := range ti.docs {
 			if _, ok := ti.termTFMap[term][i]; !ok {
-				tf := termFrequency(doc, term)
+				tf := termFrequency(doc.Words(), term)
 				ti.termTFMap[term][i] = tf
 			}
 		}
