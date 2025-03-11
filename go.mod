@@ -1,4 +1,4 @@
-module github.com/azhao1981/go-tf-idf
+module github.com/azhao1981/tfidf
 
 go 1.22
 
