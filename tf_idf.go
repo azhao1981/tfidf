@@ -23,7 +23,7 @@ type SentenceScore struct {
 }
 
 type Docs struct {
-	docs []Doc
+	Docs []Doc
 }
 
 func NewArrayDocs(docs [][]string) *Docs {
@@ -35,7 +35,7 @@ func NewArrayDocs(docs [][]string) *Docs {
 		adocs = append(adocs, ad)
 	}
 	return &Docs{
-		docs: adocs,
+		Docs: adocs,
 	}
 }
 

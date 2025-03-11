@@ -37,7 +37,7 @@ func TestTFIDF2(t *testing.T) {
 
 	// 计算特定词在第一个文档中的TF-IDF
 	sentence := strings.Split("cat chased mouse", " ")
-	ti := NewTFIDF(ad.docs)
+	ti := NewTFIDF(ad.Docs)
 	result := ti.Scan(sentence)
 	fmt.Println(result)
 	sdocs, scores := ti.SortedDocs(5)
