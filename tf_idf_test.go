@@ -74,3 +74,34 @@ func TestTFIDF3(t *testing.T) {
 	}
 
 }
+
+func TestCoverRate(t *testing.T) {
+	docs := []TestDoc{
+		{ID: 1, Text: "the cat sat on the mat"},
+		{ID: 2, Text: "the dog slept on the bed"},
+		{ID: 3, Text: "the cat chased the mouse"},
+	}
+	doc := strings.Split("cat chased mouse", " ")
+	rates := QueryCoverage(doc, docs)
+	for i, rate := range rates {
+		fmt.Printf("%d: %v\n", i, rate)
+	}
+	assert.Equal(t, 0.3333333333333333, rates[0])
+	assert.Equal(t, 0.0, rates[1])
+	assert.Equal(t, 1.0, rates[2])
+}
+
+func TestScanWithCoverage(t *testing.T) {
+	docs := []TestDoc{
+		{ID: 1, Text: "the cat sat on the mat"},
+		{ID: 2, Text: "the dog slept on the bed"},
+		{ID: 3, Text: "the cat chased the mouse"},
+	}
+	ti := NewTFIDF(docs)
+	result := ti.ScanWithCoverage(strings.Split("cat chased mouse", " "), 0.3)
+	fmt.Println(result)
+	docs, scores := ti.SortedDocs(10)
+	for i, doc := range docs {
+		fmt.Printf("%d: %v, score: %.4f\n", i, doc, scores[i])
+	}
+}

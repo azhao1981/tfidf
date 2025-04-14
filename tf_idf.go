@@ -15,6 +15,7 @@ type TFIDF[T Tokenizable] struct {
 	termIDFMap    map[string]float64         // 每个词在文档中的idf值
 	termTFMap     map[string]map[int]float64 // 每个词在每个文档中的tf值
 	sentenceScore []*SentenceScore           // 句子对于每个文档的得分
+	queryCoverage []float64                  // 查询对于每个文档的覆盖率
 }
 
 type SentenceScore struct {
@@ -58,6 +59,39 @@ func NewTFIDF[T Tokenizable](docs []T) *TFIDF[T] {
 func (ti *TFIDF[T]) Scan(sentence []string) []string {
 	ti.ScanDocs(sentence)
 	return ti.ScanSentence(sentence)
+}
+
+func (ti *TFIDF[T]) ScanWithCoverage(sentence []string, weight float64) []string {
+	ti.ScanDocs(sentence)
+	ti.QueryCoverage(sentence)
+	ti.NormalizeSentenceScore(weight)
+	for i, score := range ti.sentenceScore {
+		ti.sentenceScore[i].Score = score.Score*(1-weight) + ti.queryCoverage[score.DocIndex]*weight
+	}
+	return ti.ScanSentence(sentence)
+}
+
+func (ti *TFIDF[T]) NormalizeSentenceScore(weight float64) {
+	sum := 0.0
+	for _, score := range ti.sentenceScore {
+		sum += score.Score
+	}
+	for _, score := range ti.sentenceScore {
+		score.Score = score.Score / sum
+	}
+}
+func (ti *TFIDF[T]) QueryCoverage(query []string) []float64 {
+	CovScores := QueryCoverage(query, ti.docs)
+	// 归一化
+	sum := 0.0
+	for _, score := range CovScores {
+		sum += score
+	}
+	for i, score := range CovScores {
+		CovScores[i] = score / sum
+	}
+	copy(ti.queryCoverage, CovScores)
+	return CovScores
 }
 
 func (ti *TFIDF[T]) SortedDocs(k int) ([]T, []float64) {
@@ -163,4 +197,32 @@ func inverseDocumentFrequency(docs [][]string, term string) float64 {
 		return 0
 	}
 	return math.Log(float64(len(docs)) / float64(docCount))
+}
+
+// coverRate 计算 doc 在 Docs 每个文件被覆盖的百分比
+// 比如 123 在 12345 中被覆盖的百分比是 3/3=1.0
+// 126 在 12345 中被覆盖的百分比是 2/3=0.6666666666666666
+func QueryCoverage[T Tokenizable](query []string, docs []T) []float64 {
+	rates := make([]float64, len(docs))
+	for i := range docs {
+		rates[i] = queryCoverage(query, docs[i].Words())
+	}
+	return rates
+}
+
+func queryCoverage(query []string, target []string) float64 {
+	targetCount := make(map[string]int)
+	for _, word := range target {
+		targetCount[word]++
+	}
+
+	matched := 0
+	for _, word := range query {
+		if targetCount[word] > 0 {
+			matched++
+			targetCount[word]-- // 避免重复匹配
+		}
+	}
+
+	return float64(matched) / float64(len(query))
 }
