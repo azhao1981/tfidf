@@ -1,6 +1,7 @@
 package tfidf
 
 import (
+	"errors"
 	"math"
 	"sort"
 )
@@ -64,34 +65,37 @@ func (ti *TFIDF[T]) Scan(sentence []string) []string {
 func (ti *TFIDF[T]) ScanWithCoverage(sentence []string, weight float64) []string {
 	ti.ScanDocs(sentence)
 	ti.QueryCoverage(sentence)
-	ti.NormalizeSentenceScore(weight)
+	ti.NormalizeSentenceScore()
 	for i, score := range ti.sentenceScore {
 		ti.sentenceScore[i].Score = score.Score*(1-weight) + ti.queryCoverage[score.DocIndex]*weight
 	}
 	return ti.ScanSentence(sentence)
 }
 
-func (ti *TFIDF[T]) NormalizeSentenceScore(weight float64) {
-	sum := 0.0
-	for _, score := range ti.sentenceScore {
-		sum += score.Score
+func (ti *TFIDF[T]) NormalizeSentenceScore() {
+	scores := make([]float64, len(ti.sentenceScore))
+	for i, score := range ti.sentenceScore {
+		scores[i] = score.Score
 	}
-	for _, score := range ti.sentenceScore {
-		score.Score = score.Score / sum
+	scoresNormalized, err := ZScoreStandardize(scores)
+	if err != nil {
+		return
+	}
+	for i, _ := range ti.sentenceScore {
+		ti.sentenceScore[i].Score = scoresNormalized[i]
 	}
 }
+
 func (ti *TFIDF[T]) QueryCoverage(query []string) []float64 {
 	CovScores := QueryCoverage(query, ti.docs)
 	// 归一化
-	sum := 0.0
-	for _, score := range CovScores {
-		sum += score
+	CovScoresNormalized, err := ZScoreStandardize(CovScores)
+	if err != nil {
+		copy(ti.queryCoverage, CovScores)
+		return CovScores
 	}
-	for i, score := range CovScores {
-		CovScores[i] = score / sum
-	}
-	copy(ti.queryCoverage, CovScores)
-	return CovScores
+	copy(ti.queryCoverage, CovScoresNormalized)
+	return CovScoresNormalized
 }
 
 func (ti *TFIDF[T]) SortedDocs(k int) ([]T, []float64) {
@@ -183,7 +187,7 @@ func termFrequency(doc []string, term string) float64 {
 	return float64(count) / float64(len(doc))
 }
 
-func inverseDocumentFrequency(docs [][]string, term string) float64 {
+func inverseDocumentFrequency(docs [][]string, term string) (idf float64) {
 	docCount := 0
 	for _, doc := range docs {
 		for _, word := range doc {
@@ -193,10 +197,8 @@ func inverseDocumentFrequency(docs [][]string, term string) float64 {
 			}
 		}
 	}
-	if docCount == 0 {
-		return 0
-	}
-	return math.Log(float64(len(docs)) / float64(docCount))
+	// 使用更通用的平滑公式：log((N+1)/(df+1)) + 1
+	return math.Log(float64(len(docs)+1)/float64(docCount+1)) + 1
 }
 
 // coverRate 计算 doc 在 Docs 每个文件被覆盖的百分比
@@ -225,4 +227,34 @@ func queryCoverage(query []string, target []string) float64 {
 	}
 
 	return float64(matched) / float64(len(query))
+}
+
+func ZScoreStandardize(data []float64) ([]float64, error) {
+	if len(data) == 0 {
+		return nil, errors.New("数据不能为空")
+	}
+
+	// 计算均值
+	mean := 0.0
+	for _, v := range data {
+		mean += v
+	}
+	mean /= float64(len(data))
+
+	// 计算标准差
+	variance := 0.0
+	for _, v := range data {
+		variance += (v - mean) * (v - mean)
+	}
+	stdDev := math.Sqrt(variance / float64(len(data)))
+
+	if stdDev == 0 {
+		return nil, errors.New("标准差为0，无法标准化")
+	}
+
+	standardized := make([]float64, len(data))
+	for i, v := range data {
+		standardized[i] = (v - mean) / stdDev
+	}
+	return standardized, nil
 }

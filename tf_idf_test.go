@@ -22,8 +22,6 @@ func TestTFIDF(t *testing.T) {
 		score := SentenceTFIDF(doc, docs, sentence)
 		fmt.Printf("TF-IDF for '%s': %.4f %v+\n", sentence, score, doc)
 	}
-
-	assert.True(t, false)
 }
 
 func TestTFIDF2(t *testing.T) {
@@ -100,6 +98,43 @@ func TestScanWithCoverage(t *testing.T) {
 	ti := NewTFIDF(docs)
 	result := ti.ScanWithCoverage(strings.Split("cat chased mouse", " "), 0.3)
 	fmt.Println(result)
+	for _, score := range ti.sentenceScore {
+		fmt.Printf("%d: %v, score: %.4f\n", score.DocIndex, docs[score.DocIndex], score.Score)
+	}
+	docs, scores := ti.SortedDocs(10)
+	for i, doc := range docs {
+		fmt.Printf("%d: %v, score: %.4f\n", i, doc, scores[i])
+	}
+}
+
+func TestScanWithCoverageNaN(t *testing.T) {
+	docs := []TestDoc{
+		{ID: 3, Text: "the cat chased the mouse"},
+	}
+	ti := NewTFIDF(docs)
+	result := ti.ScanWithCoverage(strings.Split("the cat chased mouse", " "), 0.3)
+	fmt.Println(result)
+	for _, score := range ti.sentenceScore {
+		fmt.Printf("sentenceScore %d: %v, score: %.4f\n", score.DocIndex, docs[score.DocIndex], score.Score)
+	}
+	ti.NormalizeSentenceScore()
+	docs, scores := ti.SortedDocs(10)
+	for i, doc := range docs {
+		fmt.Printf("%d: %v, score: %.4f\n", i, doc, scores[i])
+	}
+}
+
+func TestScanWithCoverageNaN2(t *testing.T) {
+	docs := []TestDoc{
+		{ID: 3, Text: "the cat chased the mouse"},
+	}
+	ti := NewTFIDF(docs)
+	result := ti.ScanWithCoverage(strings.Split("the dog slept on the bed", " "), 0.3)
+	fmt.Println(result)
+	for _, score := range ti.sentenceScore {
+		fmt.Printf("sentenceScore %d: %v, score: %.4f\n", score.DocIndex, docs[score.DocIndex], score.Score)
+	}
+	ti.NormalizeSentenceScore()
 	docs, scores := ti.SortedDocs(10)
 	for i, doc := range docs {
 		fmt.Printf("%d: %v, score: %.4f\n", i, doc, scores[i])
