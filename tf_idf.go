@@ -11,12 +11,14 @@ type Tokenizable interface {
 }
 
 type TFIDF[T Tokenizable] struct {
-	docs          []T
-	Sentence      []string
-	termIDFMap    map[string]float64         // 每个词在文档中的idf值
-	termTFMap     map[string]map[int]float64 // 每个词在每个文档中的tf值
-	sentenceScore []*SentenceScore           // 句子对于每个文档的得分
-	queryCoverage []float64                  // 查询对于每个文档的覆盖率
+	docs           []T
+	Sentence       []string
+	termIDFMap     map[string]float64         // 每个词在文档中的idf值
+	termTFMap      map[string]map[int]float64 // 每个词在每个文档中的tf值
+	finalScores    []*SentenceScore           // 句子对于每个文档的得分，加权重排后
+	docIFIDFScores []float64                  // 查询对每个文档的得分,按原顺序
+	queryCoverage  []float64                  // 查询对于每个文档的覆盖率
+	weight         float64                    // 权重
 }
 
 type SentenceScore struct {
@@ -51,86 +53,98 @@ func (doc Doc) Words() []string {
 
 func NewTFIDF[T Tokenizable](docs []T) *TFIDF[T] {
 	return &TFIDF[T]{
-		docs:       docs,
-		termIDFMap: make(map[string]float64),
-		termTFMap:  make(map[string]map[int]float64),
+		docs:           docs,
+		termIDFMap:     make(map[string]float64),
+		termTFMap:      make(map[string]map[int]float64),
+		finalScores:    make([]*SentenceScore, 0),
+		docIFIDFScores: make([]float64, len(docs)),
+		queryCoverage:  make([]float64, len(docs)),
+		weight:         0.0,
 	}
 }
 
 func (ti *TFIDF[T]) Scan(sentence []string) []string {
 	ti.ScanDocs(sentence)
-	return ti.ScanSentence(sentence)
+	ti.ScanSentence(sentence)
+	ti.SortSentenceScore()
+	return ti.TopSntenceScore()
 }
 
 func (ti *TFIDF[T]) ScanWithCoverage(sentence []string, weight float64) []string {
+	ti.weight = weight
 	ti.ScanDocs(sentence)
+	ti.ScanSentence(sentence)
 	ti.QueryCoverage(sentence)
-	ti.NormalizeSentenceScore()
-	for i, score := range ti.sentenceScore {
-		ti.sentenceScore[i].Score = score.Score*(1-weight) + ti.queryCoverage[score.DocIndex]*weight
+	for i, score := range ti.finalScores {
+		ti.finalScores[i].Score = score.Score*(1-weight) + ti.queryCoverage[score.DocIndex]*ti.weight
 	}
-	return ti.ScanSentence(sentence)
+	ti.SortSentenceScore()
+	return ti.TopSntenceScore()
 }
 
 func (ti *TFIDF[T]) NormalizeSentenceScore() {
-	scores := make([]float64, len(ti.sentenceScore))
-	for i, score := range ti.sentenceScore {
+	scores := make([]float64, len(ti.finalScores))
+	for i, score := range ti.finalScores {
 		scores[i] = score.Score
 	}
 	scoresNormalized, err := ZScoreStandardize(scores)
 	if err != nil {
 		return
 	}
-	for i, _ := range ti.sentenceScore {
-		ti.sentenceScore[i].Score = scoresNormalized[i]
+	for i, _ := range ti.finalScores {
+		ti.finalScores[i].Score = scoresNormalized[i]
 	}
 }
 
 func (ti *TFIDF[T]) QueryCoverage(query []string) []float64 {
-	CovScores := QueryCoverage(query, ti.docs)
-	// 归一化
-	CovScoresNormalized, err := ZScoreStandardize(CovScores)
-	if err != nil {
-		copy(ti.queryCoverage, CovScores)
-		return CovScores
-	}
-	copy(ti.queryCoverage, CovScoresNormalized)
-	return CovScoresNormalized
+	ti.queryCoverage = QueryCoverage(query, ti.docs)
+	return ti.queryCoverage
 }
 
 func (ti *TFIDF[T]) SortedDocs(k int) ([]T, []float64) {
-	if k > len(ti.sentenceScore) {
-		k = len(ti.sentenceScore)
+	if k > len(ti.finalScores) {
+		k = len(ti.finalScores)
 	}
 	docs := make([]T, k)
 	scores := make([]float64, k)
-	for i, doc := range ti.sentenceScore[:k] {
+	for i, doc := range ti.finalScores[:k] {
 		docs[i] = ti.docs[doc.DocIndex]
 		scores[i] = doc.Score
 	}
 	return docs, scores
 }
 
-func (ti *TFIDF[T]) ScanSentence(sentence []string) []string {
+func (ti *TFIDF[T]) ScanSentence(sentence []string) error {
 	ti.Sentence = sentence
 	// 初始化 termScore
-	ti.sentenceScore = make([]*SentenceScore, 0)
+	ti.finalScores = make([]*SentenceScore, 0)
+	ti.docIFIDFScores = make([]float64, len(ti.docs))
 	ti.ScanDocs(sentence)
 	for idx := range ti.docs {
-		ti.sentenceScore = append(ti.sentenceScore, &SentenceScore{DocIndex: idx, Score: 0})
+		ti.finalScores = append(ti.finalScores, &SentenceScore{DocIndex: idx, Score: 0})
 		for _, term := range sentence {
-			ti.sentenceScore[idx].Score += ti.termTFMap[term][idx] * ti.termIDFMap[term]
+			ti.finalScores[idx].Score += ti.termTFMap[term][idx] * ti.termIDFMap[term]
+			ti.docIFIDFScores[idx] += ti.termTFMap[term][idx] * ti.termIDFMap[term]
 		}
 	}
-
-	// 按 ti.sentenceScore[term] 从大到小排序
-	sort.Slice(ti.sentenceScore, func(i, j int) bool {
-		return ti.sentenceScore[i].Score > ti.sentenceScore[j].Score
-	})
-	return ti.docs[ti.sentenceScore[0].DocIndex].Words()
+	return nil
 }
 
-// 每一个词对于整个文档来说， tf idf 值是固定的，所以只需要计算一次
+func (ti *TFIDF[T]) SortSentenceScore() error {
+	sort.Slice(ti.finalScores, func(i, j int) bool {
+		return ti.finalScores[i].Score > ti.finalScores[j].Score
+	})
+	return nil
+}
+
+func (ti *TFIDF[T]) TopSntenceScore() []string {
+	if len(ti.finalScores) == 0 {
+		return []string{}
+	}
+	return ti.docs[ti.finalScores[0].DocIndex].Words()
+}
+
+// 每个词对于整个文档来说， tf idf 值是固定的，所以只需要计算一次
 func (ti *TFIDF[T]) ScanDocs(sentence []string) {
 	// 初始化 termTFMap（如果尚未初始化）
 	if ti.termTFMap == nil {
